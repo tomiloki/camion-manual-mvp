@@ -1,0 +1,6 @@
+streamlit
+pandas==2.2.2
+google-maps-services-python
+ortools==9.10.4067
+requests
+protobuf==5.26.1
