@@ -1,5 +1,5 @@
 streamlit
-pandas==2.2.2
-ortools==9.10.4067
+pandas
+ortools
 requests
-protobuf==5.26.1
+protobuf
