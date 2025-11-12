@@ -18,7 +18,7 @@ except KeyError:
     st.stop()
 
 # --- 2. FUNCIONES DE GOOGLE API (Lógica del Colab + Caché v0.6) ---
-# (Sin cambios)
+# (Se mantiene el caché de Geocoding, ¡ese es bueno!)
 @st.cache_data 
 def obtener_geocoding(direccion):
     geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
@@ -37,7 +37,11 @@ def obtener_geocoding(direccion):
         st.error(f"Error en API Geocoding: {e}")
         return None
 
-@st.cache_data 
+# --- ¡CAMBIO CRÍTICO! v0.15 ---
+# ¡Se quita el caché de la matriz! Es la única forma de
+# estar 100% seguros de que la matriz y las listas
+# NUNCA se van a desincronizar.
+# @st.cache_data <--- ¡SE FUE!
 def obtener_matriz_distancia_chunked(_direcciones_tuple, max_elements=100, max_retries=3):
     direcciones = list(_direcciones_tuple)
     n = len(direcciones)
@@ -159,21 +163,19 @@ def imprimir_solucion_streamlit(manager, routing, solution, data, paradas_texto,
         max_paradas_link = 8 
         num_links = int(np.ceil(len(route_indices) / max_paradas_link))
             
-        current_origin_node = 0 # El primer origen es la Bodega (nodo 0)
+        current_origin_node = 0 
 
         for i in range(num_links):
             start_idx = i * max_paradas_link
             end_idx = (i + 1) * max_paradas_link
             chunk_indices = route_indices[start_idx : end_idx]
             
-            # Bug v0.12: ¿Qué pasa si chunk_indices está vacío?
-            # No debería pasar si parada_count > 0, pero por si acaso:
             if not chunk_indices:
                 continue
 
             origin_text = paradas_texto[current_origin_node]
             destination_node = chunk_indices[-1]
-            destination_text = paradas_texto[destination_node]
+            destination_text = paradas_texto[destination_node] 
             waypoint_indices = chunk_indices[:-1]
             waypoint_texts = [paradas_texto[idx] for idx in waypoint_indices]
             
@@ -185,7 +187,7 @@ def imprimir_solucion_streamlit(manager, routing, solution, data, paradas_texto,
             current_origin_node = destination_node
 
             if i == num_links - 1:
-                destination_text = paradas_texto[0] # Destino final es Bodega
+                destination_text = paradas_texto[0] 
                 waypoint_texts = [paradas_texto[idx] for idx in chunk_indices] 
                 paradas_link_final = [origin_text] + waypoint_texts + [destination_text]
             
@@ -222,7 +224,7 @@ def calcular_ahorro_baseline(matriz_dist_km, matriz_tiempos_min, costo_km_clp):
 
 # --- 4. INTERFAZ DE USUARIO ---
 
-st.title("CamiON - Mago de Oz (v0.14) 🚚") # <-- TÍTULO ACTUALIZADO
+st.title("CamiON - Mago de Oz (v0.15) 🚚") # <-- TÍTULO ACTUALIZADO
 st.write("Herramienta interna para optimización manual de rutas.")
 # (Resto de la UI sin cambios)
 st.header("1. Ingresar Datos de la Operación")
@@ -242,7 +244,7 @@ COSTO_KM_CLP = st.number_input("Costo Operativo por KM (CLP)", min_value=100, ma
 boton_optimizar = st.button("✨ OPTIMIZAR RUTA", type="primary", width='stretch')
 
 
-# --- 5. LÓGICA DE EJECUCIÓN (v0.9 - CON BALANCEO DE CARGA) ---
+# --- 5. LÓGICA DE EJECUCIÓN (v0.13 - CON LÓGICA DE GEOCACHE ROBUSTA) ---
 
 if boton_optimizar:
     if not texto_paradas or not DIRECCION_BODEGA:
@@ -256,10 +258,8 @@ if boton_optimizar:
             
             lista_paradas_input = [linea.strip() for linea in texto_paradas.split('\n') if linea.strip()]
             
-            # 1. Crear UNA lista temporal para garantizar el sync
             puntos_validos_temporal = []
 
-            # 2. Geocodificar Bodega
             bodega_latlon = obtener_geocoding(DIRECCION_BODEGA)
             if bodega_latlon:
                 puntos_validos_temporal.append( (DIRECCION_BODEGA, bodega_latlon) )
@@ -267,19 +267,13 @@ if boton_optimizar:
                 st.error("Error geocodificando la Bodega. La app no puede continuar.")
                 st.stop()
             
-            # 3. Geocodificar Paradas
             for direccion_texto in lista_paradas_input:
                 parada_latlon = obtener_geocoding(direccion_texto)
-                
-                # Solo si la geocodificación fue exitosa, la agregamos
                 if parada_latlon:
                     puntos_validos_temporal.append( (direccion_texto, parada_latlon) )
             
-            # 4. "Descomprimir" la lista temporal en las dos listas finales
-            # Esto GARANTIZA que tienen el mismo largo y el mismo orden
             direcciones_validas_texto = [item[0] for item in puntos_validos_temporal]
             direcciones_para_api_latlon = [item[1] for item in puntos_validos_temporal]
-
             # --- FIN DEL NUEVO PASO A ---
 
             st.info(f"Geocodificación completa. {len(direcciones_validas_texto)} puntos totales (1 Bodega + {len(direcciones_validas_texto)-1} paradas).")
@@ -289,6 +283,7 @@ if boton_optimizar:
             else:
                 # --- PASO B: Matriz de Distancia ---
                 st.subheader("Paso B: Calculando matriz de distancias...")
+                # ¡SIN CACHÉ! v0.15
                 matriz_km, matriz_min = obtener_matriz_distancia_chunked(tuple(direcciones_para_api_latlon))
                 
                 if np.all(matriz_km <= 0) and len(direcciones_validas_texto) > 1:
