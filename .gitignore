@@ -1,0 +1,12 @@
+# Entorno virtual de Python
+venv/
+
+# Archivo de secretos (CRÍTICO)
+.streamlit/secrets.toml
+
+# Archivos de sistema
+.DS_Store
+
+# Caché y archivos compilados de Python
+__pycache__/
+*.pyc
