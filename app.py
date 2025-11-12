@@ -37,11 +37,10 @@ def obtener_geocoding(direccion):
         st.error(f"Error en API Geocoding: {e}")
         return None
 
-# --- ¡CAMBIO CRÍTICO! v0.15 ---
-# ¡Se quita el caché de la matriz! Es la única forma de
-# estar 100% seguros de que la matriz y las listas
-# NUNCA se van a desincronizar.
-# @st.cache_data <--- ¡SE FUE!
+# --- ¡CAMBIO CRÍTICO! v0.16 ---
+# ¡Se quita el @st.cache_data!
+# Vamos a manejar la caché manualmente con st.session_state
+# para evitar el bug de desincronización.
 def obtener_matriz_distancia_chunked(_direcciones_tuple, max_elements=100, max_retries=3):
     direcciones = list(_direcciones_tuple)
     n = len(direcciones)
@@ -53,7 +52,7 @@ def obtener_matriz_distancia_chunked(_direcciones_tuple, max_elements=100, max_r
     total_chunks = int(np.ceil(n / chunk_size)) ** 2
     completed_chunks = 0
 
-    with st.spinner(f"Calculando Matriz de Distancias ({n}x{n} puntos)..."):
+    with st.spinner(f"Calculando Matriz de Distancias ({n}x{n} puntos)... ¡Quemando API!"):
         for i_chunk in range(0, n, chunk_size):
             for j_chunk in range(0, n, chunk_size):
                 i_start, i_end = i_chunk, min(i_chunk + chunk_size, n)
@@ -103,7 +102,7 @@ def obtener_matriz_distancia_chunked(_direcciones_tuple, max_elements=100, max_r
                 progress_bar.progress(completed_chunks / total_chunks, text=f"Calculando Matriz... ({int(100*completed_chunks/total_chunks)}%)")
 
     progress_bar.empty()
-    st.success("Matriz de Distancias calculada.")
+    st.success("Matriz de Distancias calculada (API).")
     return np.round(dist_matrix_km, 1), np.round(time_matrix_min, 1)
 
 # --- 3. FUNCIONES DE OR-TOOLS (Lógica del Colab - Pasos 5, 6, 8) ---
@@ -224,7 +223,7 @@ def calcular_ahorro_baseline(matriz_dist_km, matriz_tiempos_min, costo_km_clp):
 
 # --- 4. INTERFAZ DE USUARIO ---
 
-st.title("CamiON - Mago de Oz (v0.15) 🚚") # <-- TÍTULO ACTUALIZADO
+st.title("CamiON - Mago de Oz (v0.16 - Caché Manual) 🚚") # <-- TÍTULO ACTUALIZADO
 st.write("Herramienta interna para optimización manual de rutas.")
 # (Resto de la UI sin cambios)
 st.header("1. Ingresar Datos de la Operación")
@@ -243,8 +242,12 @@ COSTO_KM_CLP = st.number_input("Costo Operativo por KM (CLP)", min_value=100, ma
 
 boton_optimizar = st.button("✨ OPTIMIZAR RUTA", type="primary", width='stretch')
 
+# --- 5. LÓGICA DE EJECUCIÓN (v0.16 - CON CACHÉ MANUAL) ---
 
-# --- 5. LÓGICA DE EJECUCIÓN (v0.13 - CON LÓGICA DE GEOCACHE ROBUSTA) ---
+# --- ¡NUEVO! v0.16 ---
+# Inicializar nuestra caché manual en el session_state
+if 'matrix_cache' not in st.session_state:
+    st.session_state.matrix_cache = {}
 
 if boton_optimizar:
     if not texto_paradas or not DIRECCION_BODEGA:
@@ -253,14 +256,14 @@ if boton_optimizar:
         st.header("2. Procesando...")
         try:
             
-            # --- ¡NUEVO! PASO A: Geocodificación (v0.13 - A prueba de balas) ---
+            # --- PASO A: Geocodificación (Lógica v0.13 - Robusta) ---
             st.subheader("Paso A: Geocodificando direcciones...")
             
             lista_paradas_input = [linea.strip() for linea in texto_paradas.split('\n') if linea.strip()]
             
             puntos_validos_temporal = []
 
-            bodega_latlon = obtener_geocoding(DIRECCION_BODEGA)
+            bodega_latlon = obtener_geocoding(DIRECCION_BODEGA) # <-- Usa @st.cache_data (bueno)
             if bodega_latlon:
                 puntos_validos_temporal.append( (DIRECCION_BODEGA, bodega_latlon) )
             else:
@@ -268,23 +271,41 @@ if boton_optimizar:
                 st.stop()
             
             for direccion_texto in lista_paradas_input:
-                parada_latlon = obtener_geocoding(direccion_texto)
+                parada_latlon = obtener_geocoding(direccion_texto) # <-- Usa @st.cache_data (bueno)
                 if parada_latlon:
                     puntos_validos_temporal.append( (direccion_texto, parada_latlon) )
             
             direcciones_validas_texto = [item[0] for item in puntos_validos_temporal]
             direcciones_para_api_latlon = [item[1] for item in puntos_validos_temporal]
-            # --- FIN DEL NUEVO PASO A ---
 
             st.info(f"Geocodificación completa. {len(direcciones_validas_texto)} puntos totales (1 Bodega + {len(direcciones_validas_texto)-1} paradas).")
             
             if len(direcciones_validas_texto) < 2:
                 st.error("Se necesita al menos 1 parada válida para optimizar.")
             else:
-                # --- PASO B: Matriz de Distancia ---
+                
+                # --- ¡NUEVO! PASO B: Matriz de Distancia (con Caché Manual v0.16) ---
                 st.subheader("Paso B: Calculando matriz de distancias...")
-                # ¡SIN CACHÉ! v0.15
-                matriz_km, matriz_min = obtener_matriz_distancia_chunked(tuple(direcciones_para_api_latlon))
+                
+                # 1. Crear la "llave" para nuestra caché (la tupla de direcciones)
+                cache_key = tuple(direcciones_para_api_latlon)
+                
+                # 2. Revisar si la matriz YA EXISTE en nuestra caché manual
+                if cache_key in st.session_state.matrix_cache:
+                    # ¡SÍ EXISTE! La re-usamos.
+                    st.success("Matriz de Distancias obtenida de la caché manual.")
+                    matriz_km, matriz_min = st.session_state.matrix_cache[cache_key]
+                
+                else:
+                    # NO EXISTE. Hay que calcularla y quemar API.
+                    st.warning("No se encontró la matriz en caché. Calculando con API")
+                    matriz_km, matriz_min = obtener_matriz_distancia_chunked(cache_key)
+                    
+                    # Guardamos el resultado en nuestra caché para la próxima vez
+                    st.session_state.matrix_cache[cache_key] = (matriz_km, matriz_min)
+
+                # --- FIN DEL NUEVO PASO B ---
+
                 
                 if np.all(matriz_km <= 0) and len(direcciones_validas_texto) > 1:
                     st.error("Error en el cálculo de la Matriz. Todas las distancias son 0 o -1. Revisa los permisos de la API 'Distance Matrix'.")
