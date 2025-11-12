@@ -222,7 +222,7 @@ def calcular_ahorro_baseline(matriz_dist_km, matriz_tiempos_min, costo_km_clp):
 
 # --- 4. INTERFAZ DE USUARIO ---
 
-st.title("CamiON - Mago de Oz (v0.13 - Bugfix) 🚚") # <-- TÍTULO ACTUALIZADO
+st.title("CamiON - Mago de Oz (v0.14) 🚚") # <-- TÍTULO ACTUALIZADO
 st.write("Herramienta interna para optimización manual de rutas.")
 # (Resto de la UI sin cambios)
 st.header("1. Ingresar Datos de la Operación")
